@@ -1740,6 +1740,88 @@ class TestLegacyArguments:
             search.FastPlaid(index=test_index_path, device="cpu", index_gpu_memory="hi")
 
 
+class TestEmbeddingsProtocol:
+    """Tests for the Embeddings ABC and its use with FastPlaid.create()."""
+
+    def test_embeddings_and_list_embeddings_importable(self):
+        """Embeddings and ListEmbeddings are exported from the top-level package."""
+        from fast_plaid import Embeddings, ListEmbeddings  # noqa: F401
+
+        assert issubclass(ListEmbeddings, Embeddings)
+
+    def test_list_embeddings_wraps_list(self):
+        """ListEmbeddings correctly wraps a plain list of tensors."""
+        from fast_plaid import ListEmbeddings
+
+        tensors = [torch.randn(10, 128) for _ in range(5)]
+        emb = ListEmbeddings(tensors)
+
+        assert len(emb) == 5
+        assert emb[0].shape == (10, 128)
+
+        batch = emb.get_batch([0, 2, 4])
+        assert batch.shape == (30, 128)
+
+    def test_create_with_custom_embeddings_subclass(self, test_index_path):
+        """FastPlaid.create() works when passed a custom Embeddings subclass."""
+        from fast_plaid import Embeddings
+
+        class LazyEmbeddings(Embeddings):
+            """Simulates a lazy / disk-backed embedding source."""
+
+            def __init__(self, data):
+                self._data = data
+
+            def __len__(self):
+                return len(self._data)
+
+            def __getitem__(self, index):
+                return self._data[index]
+
+        raw = [torch.randn(30, 128, device="cpu") for _ in range(50)]
+        lazy_emb = LazyEmbeddings(raw)
+        queries = torch.randn(5, 15, 128, device="cpu")
+
+        index = search.FastPlaid(index=test_index_path, device="cpu")
+        try:
+            index.create(documents_embeddings=lazy_emb, kmeans_niters=4)
+            results = index.search(queries_embeddings=queries, top_k=5)
+            assert len(results) == 5
+            assert all(len(r) == 5 for r in results)
+        finally:
+            index.close()
+
+    def test_create_with_list_embeddings(self, test_index_path):
+        """FastPlaid.create() works when passed a ListEmbeddings object."""
+        from fast_plaid import ListEmbeddings
+
+        tensors = [torch.randn(30, 128, device="cpu") for _ in range(50)]
+        emb = ListEmbeddings(tensors)
+        queries = torch.randn(5, 15, 128, device="cpu")
+
+        index = search.FastPlaid(index=test_index_path, device="cpu")
+        try:
+            index.create(documents_embeddings=emb, kmeans_niters=4)
+            results = index.search(queries_embeddings=queries, top_k=5)
+            assert len(results) == 5
+            assert all(len(r) == 5 for r in results)
+        finally:
+            index.close()
+
+    def test_plain_list_still_works(self, test_index_path):
+        """Passing a plain list[torch.Tensor] continues to work (backward compat)."""
+        tensors = [torch.randn(30, 128, device="cpu") for _ in range(50)]
+        queries = torch.randn(5, 15, 128, device="cpu")
+
+        index = search.FastPlaid(index=test_index_path, device="cpu")
+        try:
+            index.create(documents_embeddings=tensors, kmeans_niters=4)
+            results = index.search(queries_embeddings=queries, top_k=5)
+            assert len(results) == 5
+        finally:
+            index.close()
+
+
 # Legacy test function for backwards compatibility
 def test():
     """Ensure that the Fast-PLAiD search index can be created and queried correctly."""

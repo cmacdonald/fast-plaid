@@ -7,6 +7,7 @@ import math
 import os
 import threading
 import warnings
+from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
@@ -22,6 +23,7 @@ from filelock import FileLock
 from filelock import Timeout as FileLockTimeout
 from joblib import Parallel, delayed
 
+from ..embeddings import Embeddings, ListEmbeddings
 from ..filtering import create, delete
 from .kmeans import FastKMeans
 from .load import _load_index_tensors_cpu, _reload_index, save_list_tensors_on_disk
@@ -70,7 +72,7 @@ def _load_torch_path(device: str) -> str:
 
 
 def compute_kmeans(
-    documents_embeddings: list[torch.Tensor] | torch.Tensor,
+    documents_embeddings: Embeddings | Sequence[torch.Tensor] | torch.Tensor,
     dim: int,
     device: str,
     kmeans_niters: int,
@@ -532,8 +534,8 @@ class FastPlaid:
         self.close()
 
     def _format_embeddings(
-        self, embeddings: list[torch.Tensor] | torch.Tensor
-    ) -> list[torch.Tensor] | torch.Tensor:
+        self, embeddings: Embeddings | Sequence[torch.Tensor] | torch.Tensor
+    ) -> Embeddings | list[torch.Tensor] | torch.Tensor:
         """Standardize embedding shapes without creating deep copies.
 
         Args:
@@ -544,6 +546,9 @@ class FastPlaid:
         """
         if isinstance(embeddings, torch.Tensor):
             return embeddings.squeeze(0) if embeddings.dim() == 3 else embeddings
+
+        if isinstance(embeddings, Embeddings):
+            return embeddings
 
         return [e.squeeze(0) if e.dim() == 3 else e for e in embeddings]
 
@@ -640,7 +645,7 @@ class FastPlaid:
     @torch.inference_mode()
     def create(
         self,
-        documents_embeddings: list[torch.Tensor] | torch.Tensor,
+        documents_embeddings: Embeddings | Sequence[torch.Tensor] | torch.Tensor,
         kmeans_niters: int = 4,
         max_points_per_centroid: int = 256,
         nbits: int = 4,
@@ -702,14 +707,14 @@ class FastPlaid:
                         self.index,
                         "embeddings.npy",
                     ),
-                    tensors=documents_embeddings,
+                    tensors=[documents_embeddings[i] for i in range(len(documents_embeddings))],
                 )
 
             # Determine dimensionality from the first available element
             dim = (
-                documents_embeddings[0].shape[-1]
-                if isinstance(documents_embeddings, list)
-                else documents_embeddings.shape[-1]
+                documents_embeddings.shape[-1]
+                if isinstance(documents_embeddings, torch.Tensor)
+                else documents_embeddings[0].shape[-1]
             )
 
             # Use the first device for creation logic
