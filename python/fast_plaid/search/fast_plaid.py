@@ -707,7 +707,7 @@ class FastPlaid:
                         self.index,
                         "embeddings.npy",
                     ),
-                    tensors=[documents_embeddings[i] for i in range(len(documents_embeddings))],
+                    tensors=documents_embeddings,
                 )
 
             # Determine dimensionality from the first available element

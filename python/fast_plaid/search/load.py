@@ -2,8 +2,12 @@ import gc
 import io
 import json
 import os
+from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from fast_plaid.embeddings import Embeddings
 
 import numpy as np
 import numpy.lib.format as np_fmt
@@ -507,18 +511,21 @@ def _reload_index(
     return indices
 
 
-def save_list_tensors_on_disk(path: str, tensors: list[torch.Tensor]) -> None:
-    """Save a list of tensors to a .npy file.
+def save_list_tensors_on_disk(
+    path: str, tensors: "Sequence[torch.Tensor] | Embeddings"
+) -> None:
+    """Save a sequence of tensors to a .npy file.
 
     Args:
     ----
     path:
         The file path to save to.
     tensors:
-        List of tensors to save.
+        A sequence or :class:`~fast_plaid.Embeddings` of tensors to save.
 
     """
-    data_array = np.empty(len(tensors), dtype=object)
-    for i, t in enumerate(tensors):
-        data_array[i] = t.cpu().numpy()
+    n = len(tensors)
+    data_array = np.empty(n, dtype=object)
+    for i in range(n):
+        data_array[i] = tensors[i].cpu().numpy()
     np.save(path, data_array, allow_pickle=True)

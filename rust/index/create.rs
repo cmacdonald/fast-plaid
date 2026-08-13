@@ -236,12 +236,9 @@ pub fn create_index(
 
     // Calculate average doc len for metadata estimation
     let total_doc_len_sum: f64 = (0..n_docs)
-        .map(|i| {
-            documents_embeddings
-                .get(i)
-                .map(|t| t.size()[0] as f64)
-                .unwrap_or(0.0)
-        })
+        .map(|i| documents_embeddings.get(i).map(|t| t.size()[0] as f64))
+        .collect::<Result<Vec<f64>>>()?
+        .into_iter()
         .sum();
     let avg_doc_len = total_doc_len_sum / n_docs as f64;
 

@@ -89,7 +89,8 @@ impl Embeddings for PyEmbeddings {
         Python::with_gil(|py| {
             let bound = self.obj.bind(py);
             // If the object exposes get_batch, use it for efficiency.
-            // Otherwise fall back to individual get() calls (trait default).
+            // Otherwise fall back to individual __getitem__ calls using the
+            // already-acquired GIL rather than re-entering via self.get().
             if bound.hasattr("get_batch").unwrap_or(false) {
                 let py_indices: Vec<usize> = indices.to_vec();
                 let result = bound
@@ -102,7 +103,20 @@ impl Embeddings for PyEmbeddings {
             } else {
                 let tensors: Vec<Tensor> = indices
                     .iter()
-                    .map(|&i| self.get(i).map(|pt| pt.0))
+                    .map(|&i| {
+                        bound
+                            .get_item(i)
+                            .with_context(|| {
+                                format!("Embeddings.__getitem__({i}) failed in get_batch")
+                            })?
+                            .extract::<PyTensor>()
+                            .with_context(|| {
+                                format!(
+                                    "Embeddings.__getitem__({i}) did not return a Tensor in get_batch"
+                                )
+                            })
+                            .map(|pt| pt.0)
+                    })
                     .collect::<Result<_>>()?;
                 if tensors.is_empty() {
                     return Err(anyhow!("get_batch called with empty indices"));
