@@ -1,6 +1,5 @@
 use anyhow::{anyhow, Context, Result};
 use indicatif::{ProgressBar, ProgressIterator};
-use pyo3_tch::PyTensor;
 use rand::prelude::SliceRandom;
 use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
@@ -16,6 +15,7 @@ use std::path::Path;
 use tch::{Device, Kind, Tensor};
 
 use crate::search::tensor::scalar_quantile_kthvalue;
+use crate::utils::embeddings::Embeddings;
 use crate::utils::residual_codec::ResidualCodec;
 
 /// Holds metadata for a chunk of the index, including the number of
@@ -204,7 +204,7 @@ pub fn packbits(bits: &Tensor) -> Tensor {
 /// * `batch_size` - Batch size for processing.
 /// * `seed` - Random seed for reproducibility.
 pub fn create_index(
-    documents_embeddings: &Vec<PyTensor>,
+    documents_embeddings: &dyn Embeddings,
     index_path: &str,
     embedding_dim: i64,
     nbits: i64,
@@ -235,21 +235,23 @@ pub fn create_index(
     let mut total_samples_i64: i64 = 0;
 
     // Calculate average doc len for metadata estimation
-    // Note: iterating all tensors just for size is cheap (metadata access)
-    let total_doc_len_sum: f64 = documents_embeddings
-        .iter()
-        .map(|t| t.size()[0] as f64)
+    let total_doc_len_sum: f64 = (0..n_docs)
+        .map(|i| documents_embeddings.get(i).map(|t| t.size()[0] as f64))
+        .collect::<Result<Vec<f64>>>()?
+        .into_iter()
         .sum();
     let avg_doc_len = total_doc_len_sum / n_docs as f64;
 
-    let sample_tensors_refs: Vec<&PyTensor> = sample_pids
+    let sample_tensors: Vec<_> = sample_pids
         .iter()
         .map(|&pid| {
-            let tensor = &documents_embeddings[pid as usize];
+            let tensor = documents_embeddings
+                .get(pid as usize)
+                .with_context(|| format!("Failed to get embedding at index {pid}"))?;
             total_samples_i64 += tensor.size()[0];
-            tensor
+            Ok(tensor)
         })
-        .collect();
+        .collect::<Result<_>>()?;
 
     let total_samples_f64 = total_samples_i64 as f64;
     let heldout_size = (0.05 * total_samples_f64).min(50_000f64).round() as i64;
@@ -257,7 +259,7 @@ pub fn create_index(
     let mut heldout_tensors_vec: Vec<Tensor> = Vec::with_capacity(sample_count);
     let mut current_heldout_count: i64 = 0;
 
-    for tensor in sample_tensors_refs.iter().rev() {
+    for tensor in sample_tensors.iter().rev() {
         let needed = heldout_size - current_heldout_count;
         if needed <= 0 {
             break;
@@ -438,7 +440,10 @@ pub fn create_index(
         let mut batch_acc: Vec<Tensor> = Vec::new();
         let mut current_rows: i64 = 0;
 
-        for doc_tensor in &documents_embeddings[chk_offset..chk_end_offset] {
+        for doc_idx in chk_offset..chk_end_offset {
+            let doc_tensor = documents_embeddings
+                .get(doc_idx)
+                .with_context(|| format!("Failed to get embedding at index {doc_idx}"))?;
             let doc_len = doc_tensor.size()[0];
             chk_doclens.push(doc_len);
 

@@ -28,7 +28,7 @@ use search::search::{
     search_many, search_many_with_token_scores, QueryResult, QueryResultWithTokenScores,
     SearchParameters,
 };
-use utils::embeddings::reconstruct_embeddings;
+use utils::embeddings::{reconstruct_embeddings, PyEmbeddings};
 use utils::errors::anyhow_to_pyerr;
 
 /// Dynamically loads the native Torch shared library (libtorch).
@@ -136,7 +136,7 @@ fn create(
     device: String,
     embedding_dim: i64,
     nbits: i64,
-    embeddings: Vec<PyTensor>,
+    embeddings: PyObject,
     centroids: PyTensor,
     batch_size: i64,
     seed: Option<u64>,
@@ -148,8 +148,10 @@ fn create(
     let device = get_device(&device)?;
     let centroids = centroids.to_device(device).to_kind(Kind::Half);
 
+    let py_embeddings = PyEmbeddings::new(embeddings);
+
     let result = create_index(
-        &embeddings,
+        &py_embeddings,
         &index,
         embedding_dim,
         nbits,
